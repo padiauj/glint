@@ -1,0 +1,72 @@
+# Glint - Fast File Search Tool
+# Workspace root configuration
+
+[workspace]
+resolver = "2"
+members = ["crates/glint-core", "crates/glint-backend-ntfs", "crates/glint-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Glint Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/glint-search/glint"
+description = "Extremely fast file name search across local volumes"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Core dependencies
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+lz4_flex = "0.11"
+
+# Concurrency and performance
+rayon = "1.10"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+dashmap = "6.0"
+
+# Search and matching
+regex = "1.10"
+glob = "0.3"
+aho-corasick = "1.1"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI and TUI
+clap = { version = "4.5", features = ["derive", "env"] }
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Configuration
+toml = "0.8"
+directories = "5.0"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Testing
+tempfile = "3.14"
+
+# Windows-specific (only for backend-ntfs)
+[workspace.dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_Security",
+    "Win32_System_Diagnostics_Debug",
+]
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

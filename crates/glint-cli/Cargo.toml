@@ -1,0 +1,31 @@
+[package]
+name = "glint-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Command-line interface and TUI for Glint"
+rust-version.workspace = true
+
+[[bin]]
+name = "glint"
+path = "src/main.rs"
+
+[dependencies]
+glint-core = { path = "../glint-core" }
+glint-backend-ntfs = { path = "../glint-backend-ntfs" }
+anyhow.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+directories.workspace = true
+toml.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
