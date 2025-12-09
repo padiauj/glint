@@ -147,10 +147,10 @@ impl Index {
         let volume_id = volume.id.as_str().to_string();
         let record_count = records.len();
 
-        info!(
+        debug!(
             volume = %volume_id,
             records = record_count,
-            "Adding records from volume scan"
+            "Adding records to index"
         );
 
         // Remove existing records for this volume

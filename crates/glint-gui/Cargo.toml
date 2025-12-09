@@ -1,0 +1,59 @@
+[package]
+name = "glint-gui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Cross-platform GUI for Glint file search using Qt (LGPL)"
+rust-version.workspace = true
+
+[[bin]]
+name = "glint-gui"
+path = "src/main.rs"
+
+[dependencies]
+# Glint core
+glint-core = { path = "../glint-core" }
+
+# Qt bindings via cxx-qt (LGPL compliant via dynamic linking)
+cxx = "1.0"
+cxx-qt = "0.7"
+cxx-qt-lib = { version = "0.7", features = ["qt_gui", "qt_qml"] }
+
+# Workspace dependencies
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+parking_lot.workspace = true
+directories.workspace = true
+
+# Serialization for settings
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Platform-specific file operations  
+open = "5.3"
+
+[target.'cfg(windows)'.dependencies]
+glint-backend-ntfs = { path = "../glint-backend-ntfs" }
+
+# Windows-specific for installer and service
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_Services",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+]
+
+[target.'cfg(windows)'.dependencies.winreg]
+version = "0.52"
+
+[build-dependencies]
+cxx-qt-build = "0.7"

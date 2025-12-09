@@ -1,0 +1,68 @@
+<svg width="512" height="512" viewBox="0 0 512 512"
+     xmlns="http://www.w3.org/2000/svg"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Glint Logo</title>
+  <desc id="desc">
+    Dark rounded square with a subtle grid, soft glow,
+    and a six-point faceted star composed of rhombuses.
+  </desc>
+
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#16181f"/>
+      <stop offset="100%" stop-color="#101116"/>
+    </linearGradient>
+
+    <!-- Soft radial glow behind the star -->
+    <radialGradient id="glowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffd46a" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#ffd46a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Rounded square background -->
+  <rect x="32" y="32" width="448" height="448" rx="48"
+        fill="url(#bgGrad)"/>
+
+  <!-- Subtle grid -->
+  <g stroke="#262930" stroke-width="1">
+    <!-- verticals -->
+    <line x1="106" y1="56" x2="106" y2="456"/>
+    <line x1="156" y1="56" x2="156" y2="456"/>
+    <line x1="206" y1="56" x2="206" y2="456"/>
+    <line x1="256" y1="56" x2="256" y2="456"/>
+    <line x1="306" y1="56" x2="306" y2="456"/>
+    <line x1="356" y1="56" x2="356" y2="456"/>
+    <line x1="406" y1="56" x2="406" y2="456"/>
+
+    <!-- horizontals -->
+    <line x1="56" y1="106" x2="456" y2="106"/>
+    <line x1="56" y1="156" x2="456" y2="156"/>
+    <line x1="56" y1="206" x2="456" y2="206"/>
+    <line x1="56" y1="256" x2="456" y2="256"/>
+    <line x1="56" y1="306" x2="456" y2="306"/>
+    <line x1="56" y1="356" x2="456" y2="356"/>
+    <line x1="56" y1="406" x2="456" y2="406"/>
+  </g>
+
+  <!-- Glow behind star -->
+  <circle cx="256" cy="256" r="120" fill="url(#glowGrad)"/>
+
+  <!-- Six-point faceted star: 6 rhombi with thin black borders -->
+  <g fill="#ffc94d" stroke="#000000" stroke-width="1" stroke-linejoin="round">
+    <!-- Top -->
+    <polygon points="256,146 283.5,208.4 256,256 228.5,208.4"/>
+    <!-- Upper-right -->
+    <polygon points="351.3,201 311,256 256,256 283.5,208.4"/>
+    <!-- Lower-right -->
+    <polygon points="351.3,311 283.5,303.6 256,256 311,256"/>
+    <!-- Bottom -->
+    <polygon points="256,366 228.5,303.6 256,256 283.5,303.6"/>
+    <!-- Lower-left -->
+    <polygon points="160.7,311 201,256 256,256 228.5,303.6"/>
+    <!-- Upper-left -->
+    <polygon points="160.7,201 228.5,208.4 256,256 201,256"/>
+  </g>
+
+</svg>
