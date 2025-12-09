@@ -38,6 +38,7 @@ use crate::backend::{JournalState, VolumeInfo};
 use crate::error::{GlintError, Result};
 use crate::index::{Index, VolumeIndexState};
 use crate::types::{FileRecord, IndexStats, VolumeId};
+use crate::archive;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
@@ -46,11 +47,11 @@ use tracing::{debug, info, warn};
 use rayon::prelude::*;
 
 /// Magic bytes at the start of index files
-const MAGIC_HEADER: &[u8; 4] = b"GLNT";
+pub const MAGIC_HEADER: &[u8; 4] = b"GLNT";
 /// Magic bytes at the end of index files (reversed)
-const MAGIC_FOOTER: &[u8; 4] = b"TGLN";
+pub const MAGIC_FOOTER: &[u8; 4] = b"TGLN";
 /// Current index format version
-pub const INDEX_VERSION: u32 = 1;
+pub const INDEX_VERSION: u32 = 3;
 
 /// Flags for index file format
 #[derive(Debug, Clone, Copy)]
@@ -61,10 +62,13 @@ impl IndexFlags {
     pub const NONE: Self = IndexFlags(0);
     /// LZ4 compression
     pub const COMPRESSED_LZ4: Self = IndexFlags(1);
+    /// Chunked records section (v2+)
+    pub const CHUNKED: Self = IndexFlags(2);
 
     fn is_compressed(&self) -> bool {
         self.0 & 1 != 0
     }
+    fn is_chunked(&self) -> bool { self.0 & 2 != 0 }
 }
 
 /// Header structure for the index file
@@ -94,12 +98,9 @@ impl IndexHeader {
                 reason: "Invalid magic bytes in header".to_string(),
             });
         }
-
-        if self.version != INDEX_VERSION {
-            return Err(GlintError::IndexVersionMismatch {
-                found: self.version,
-                expected: INDEX_VERSION,
-            });
+        // Accept older versions; newer versions fail.
+        if self.version > INDEX_VERSION {
+            return Err(GlintError::IndexVersionMismatch { found: self.version, expected: INDEX_VERSION });
         }
 
         Ok(())
@@ -145,12 +146,11 @@ impl StoredVolumeState {
     }
 }
 
-/// Stored index data
+/// Stored index metadata (stats + volumes) used in v2 chunked format
 #[derive(Debug, Serialize, Deserialize)]
-struct StoredIndex {
+struct StoredMeta {
     stats: IndexStats,
     volumes: Vec<StoredVolumeState>,
-    records: Vec<FileRecord>,
 }
 
 /// Manages persistence of the index to disk.
@@ -231,34 +231,35 @@ impl IndexStore {
             "Saving index to disk"
         );
 
-        let stored = StoredIndex {
-            stats: index.stats(),
-            volumes: index
-                .volume_states()
-                .iter()
-                .map(StoredVolumeState::from)
-                .collect(),
-            records,
-        };
+        // v3 rkyv format (uncompressed for fastest startup)
+        let flags = IndexFlags::NONE;
 
-        let flags = if self.use_compression {
-            IndexFlags::COMPRESSED_LZ4
-        } else {
-            IndexFlags::NONE
-        };
+        // (v3 does not use meta_bytes)
 
-        // Serialize the data
-        let data = bincode::serialize(&stored)?;
+        // Prepare chunks of records
+        let chunk_size: usize = 200_000.max(1);
+        let total = records.len();
+        let chunks: Vec<&[FileRecord]> = (0..total)
+            .step_by(chunk_size)
+            .map(|start| {
+                let end = (start + chunk_size).min(total);
+                &records[start..end]
+            })
+            .collect();
 
-        // Optionally compress
-        let final_data = if self.use_compression {
-            lz4_flex::compress_prepend_size(&data)
-        } else {
-            data
-        };
+        // Serialize (and compress) each chunk
+        let mut chunk_blobs: Vec<Vec<u8>> = Vec::with_capacity(chunks.len());
+        for ch in &chunks {
+            let bytes = bincode::serialize(ch)?;
+            let blob = if self.use_compression {
+                lz4_flex::compress_prepend_size(&bytes)
+            } else {
+                bytes
+            };
+            chunk_blobs.push(blob);
+        }
 
-        // Calculate checksum
-        let checksum = crc32fast::hash(&final_data);
+        // Checksum computed after assembling data buffer below
 
         // Write to temp file
         let temp_path = self.temp_path();
@@ -271,10 +272,12 @@ impl IndexStore {
             let header_bytes = bincode::serialize(&header)?;
             writer.write_all(&header_bytes)?;
 
-            // Write data
-            writer.write_all(&final_data)?;
+            // Build rkyv archive in memory and write directly
+            let data_buf = archive::build_archived_bytes(index);
+            writer.write_all(&data_buf)?;
 
             // Write footer
+            let checksum = crc32fast::hash(&data_buf);
             writer.write_all(&checksum.to_le_bytes())?;
             writer.write_all(MAGIC_FOOTER)?;
 
@@ -292,11 +295,7 @@ impl IndexStore {
         // Rename temp to final
         fs::rename(&temp_path, &index_path)?;
 
-        debug!(
-            size = final_data.len(),
-            compressed = self.use_compression,
-            "Index saved successfully"
-        );
+        debug!(compressed = false, "Index saved successfully (v3 rkyv)");
 
         Ok(())
     }
@@ -354,38 +353,119 @@ impl IndexStore {
             });
         }
 
-        // Decompress if needed
-        let decompressed = if flags.is_compressed() {
-            lz4_flex::decompress_size_prepended(&data).map_err(|e| GlintError::IndexCorrupted {
-                reason: format!("Decompression failed: {}", e),
-            })?
-        } else {
-            data
-        };
-
-        // Deserialize
-        let stored: StoredIndex =
-            bincode::deserialize(&decompressed).map_err(|e| GlintError::IndexCorrupted {
-                reason: format!("Deserialization failed: {}", e),
-            })?;
-        
-        // Precompute caches in parallel to speed up loading
-        let mut records: Vec<FileRecord> = stored.records;
-        records.par_iter_mut().for_each(|r| r.init_cache());
-
-        // Build the index
-        let index = Index::with_capacity(records.len());
-
-        // Group records by volume and add them
-        let mut records_by_volume: std::collections::HashMap<String, Vec<FileRecord>> =
-            std::collections::HashMap::new();
-
-        for record in records {
-            let vid = record.volume_id.as_str().to_string();
-            records_by_volume.entry(vid).or_default().push(record);
+        // v3 path: rkyv archive (uncompressed)
+        if header.version == 3 {
+            // Map into memory for zero-copy view
+            // (We still build an Index today for compatibility. Next step: expose a zero-copy view.)
+            // No decompression step; data is an rkyv archive
+            unsafe {
+                let root = archive::archived_root(&data);
+                let mut recs: Vec<FileRecord> = Vec::with_capacity(root.is_dir.len());
+                for i in 0..root.is_dir.len() {
+                    let noff = root.name_offsets[i] as usize;
+                    let poff = root.path_offsets[i] as usize;
+                    let name = read_cstr(&root.names_blob[noff..]);
+                    let path = read_cstr(&root.paths_blob[poff..]);
+                    use crate::types::{FileId, VolumeId as VID};
+                    let rec = FileRecord::new(
+                        FileId::new(i as u64 + 1),
+                        None,
+                        VID::new("V"),
+                        name.to_string(),
+                        path.to_string(),
+                        root.is_dir[i] != 0,
+                    );
+                    recs.push(rec);
+                }
+                let idx = Index::with_capacity(recs.len());
+                let vol = VolumeInfo::new(VolumeId::new("V"), "V:", "NTFS");
+                idx.add_volume_records(&vol, recs);
+                info!(records = idx.len(), "Index loaded successfully (v3 rkyv)");
+                return Ok(idx);
+            }
         }
 
-        for vol_state in stored.volumes {
+        // v1 path (legacy): single blob (maybe compressed) containing StoredIndex
+        if header.version == 1 && !flags.is_chunked() {
+            let decompressed = if flags.is_compressed() {
+                lz4_flex::decompress_size_prepended(&data)
+                    .map_err(|e| GlintError::IndexCorrupted { reason: format!("Decompression failed: {}", e) })?
+            } else { data };
+
+            let stored: StoredIndexV1 = bincode::deserialize(&decompressed)
+                .map_err(|e| GlintError::IndexCorrupted { reason: format!("Deserialization failed: {}", e) })?;
+
+            let mut records: Vec<FileRecord> = stored.records;
+            records.par_iter_mut().for_each(|r| r.init_cache());
+            let index = Index::with_capacity(records.len());
+            let mut records_by_volume: std::collections::HashMap<String, Vec<FileRecord>> = std::collections::HashMap::new();
+            for record in records { records_by_volume.entry(record.volume_id.as_str().to_string()).or_default().push(record); }
+            for vol_state in stored.volumes {
+                let vid = vol_state.id.clone();
+                if let Some(records) = records_by_volume.remove(&vid) {
+                    let volume_info = VolumeInfo::new(VolumeId::new(&vol_state.id), &vol_state.mount_point, &vol_state.filesystem_type);
+                    index.add_volume_records(&volume_info, records);
+                    if let Some(js) = vol_state.journal_state { index.update_journal_state(&VolumeId::new(&vid), js); }
+                }
+            }
+            info!(records = index.len(), volumes = index.volume_states().len(), "Index loaded successfully (v1)");
+            // Opportunistically rewrite to v2 chunked format for faster future loads
+            if let Err(e) = self.save(&index) {
+                warn!(error = %e, "Failed to rewrite index to v2 format");
+            }
+            return Ok(index);
+        }
+
+        // v2 path: chunked
+        if !flags.is_chunked() {
+            return Err(GlintError::IndexCorrupted { reason: "Expected chunked format (v2), but flag not set".to_string() });
+        }
+
+        // Parse meta and chunks from data buffer
+        let mut cursor = 0usize;
+        if data.len() < 4 { return Err(GlintError::IndexCorrupted { reason: "Truncated meta length".to_string() }); }
+        let meta_len = u32::from_le_bytes([data[cursor], data[cursor+1], data[cursor+2], data[cursor+3]]) as usize; cursor += 4;
+        if cursor + meta_len > data.len() { return Err(GlintError::IndexCorrupted { reason: "Truncated meta".to_string() }); }
+        let meta_bytes = &data[cursor..cursor+meta_len]; cursor += meta_len;
+        if cursor + 4 > data.len() { return Err(GlintError::IndexCorrupted { reason: "Truncated chunk count".to_string() }); }
+        let chunk_count = u32::from_le_bytes([data[cursor], data[cursor+1], data[cursor+2], data[cursor+3]]) as usize; cursor += 4;
+
+        let meta: StoredMeta = bincode::deserialize(meta_bytes)
+            .map_err(|e| GlintError::IndexCorrupted { reason: format!("Meta deserialization failed: {}", e) })?;
+
+        let mut chunk_slices: Vec<&[u8]> = Vec::with_capacity(chunk_count);
+        for _ in 0..chunk_count {
+            if cursor + 4 > data.len() { return Err(GlintError::IndexCorrupted { reason: "Truncated chunk length".to_string() }); }
+            let len = u32::from_le_bytes([data[cursor], data[cursor+1], data[cursor+2], data[cursor+3]]) as usize; cursor += 4;
+            if cursor + len > data.len() { return Err(GlintError::IndexCorrupted { reason: "Truncated chunk".to_string() }); }
+            let slice = &data[cursor..cursor+len];
+            cursor += len;
+            chunk_slices.push(slice);
+        }
+
+        // Decompress + deserialize chunks in parallel
+        let mut all_records: Vec<FileRecord> = chunk_slices
+            .par_iter()
+            .map(|blob| {
+                let bytes = if flags.is_compressed() {
+                    lz4_flex::decompress_size_prepended(blob)
+                        .map_err(|e| GlintError::IndexCorrupted { reason: format!("Decompression failed: {}", e) })?
+                } else { (*blob).to_vec() };
+                let mut recs: Vec<FileRecord> = bincode::deserialize(&bytes)
+                    .map_err(|e| GlintError::IndexCorrupted { reason: format!("Deserialization failed: {}", e) })?;
+                recs.par_iter_mut().for_each(|r| r.init_cache());
+                Ok::<Vec<FileRecord>, GlintError>(recs)
+            })
+            .try_reduce(|| Vec::new(), |mut acc, mut v| { acc.append(&mut v); Ok::<Vec<FileRecord>, GlintError>(acc) })?;
+
+        // Build the index
+        let index = Index::with_capacity(all_records.len());
+        // Group by volume
+        let mut records_by_volume: std::collections::HashMap<String, Vec<FileRecord>> = std::collections::HashMap::new();
+        for record in all_records.drain(..) {
+            records_by_volume.entry(record.volume_id.as_str().to_string()).or_default().push(record);
+        }
+        for vol_state in meta.volumes {
             let vid = vol_state.id.clone();
             if let Some(records) = records_by_volume.remove(&vid) {
                 let volume_info = VolumeInfo::new(
@@ -454,6 +534,20 @@ impl IndexStore {
         // Try to load
         self.load()
     }
+}
+
+fn read_cstr(bytes: &[u8]) -> &str {
+    let mut end = 0;
+    while end < bytes.len() && bytes[end] != 0 { end += 1; }
+    std::str::from_utf8(&bytes[..end]).unwrap_or("")
+}
+
+// Legacy v1 stored representation used only for backward-compatible loads
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredIndexV1 {
+    stats: IndexStats,
+    volumes: Vec<StoredVolumeState>,
+    records: Vec<FileRecord>,
 }
 
 // Checksum calculation now uses the optimized crc32fast crate.

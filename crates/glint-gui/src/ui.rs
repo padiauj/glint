@@ -248,10 +248,16 @@ pub fn central_panel(ctx: &egui::Context, app: &mut GlintApp) {
             return;
         }
 
-        // Show empty state
+        // Show empty or in-flight state
         if app.search.results.is_empty() {
             ui.centered_and_justified(|ui| {
-                if app.search.query.is_empty() {
+                if app.search.is_in_flight() {
+                    ui.label(
+                        RichText::new("Searching...")
+                            .size(18.0)
+                            .color(Color32::GRAY),
+                    );
+                } else if app.search.query.is_empty() {
                     ui.label(
                         RichText::new("Start typing to search files...")
                             .size(18.0)
@@ -641,14 +647,8 @@ pub fn index_builder_window(ctx: &egui::Context, app: &mut GlintApp) {
                         .collect();
 
                     if !selected.is_empty() {
-                        // Update settings with selected volumes
-                        app.settings.indexed_volumes = selected.clone();
-                        if let Err(e) = app.settings.save() {
-                            app.status_message = format!("Failed to save settings: {}", e);
-                        }
-
-                        // Trigger index rebuild
-                        app.index_volumes();
+                        // Trigger async index rebuild (non-blocking)
+                        app.start_index_build();
 
                         // Install and start service if requested
                         if app.enable_service_on_index {

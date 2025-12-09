@@ -33,6 +33,9 @@ tracing-subscriber.workspace = true
 parking_lot.workspace = true
 directories.workspace = true
 crossbeam-channel.workspace = true
+tracing-appender = "0.2"
+arc-swap = "1"
+fst = "0.4"
 
 # Clipboard support
 arboard = "3.4"

@@ -6,7 +6,8 @@ use crate::settings::Settings;
 use crate::ui;
 use eframe::egui;
 use glint_core::{Config, Index, IndexStore};
-use crossbeam_channel::Receiver;
+use glint_core::archive_view::ArchivedView;
+use crossbeam_channel::{unbounded, Receiver};
 use std::time::{Duration, Instant};
 use std::sync::Arc;
 
@@ -39,6 +40,13 @@ pub struct GlintApp {
     loading_index: bool,
     load_started_at: Instant,
     load_rx: Option<Receiver<Arc<Index>>>,
+
+    // Async index building
+    building_index: bool,
+    build_started_at: Instant,
+    build_rx: Option<Receiver<Result<Arc<Index>, String>>>,
+    saving_index: bool,
+    save_rx: Option<Receiver<Result<(), String>>>,
 }
 
 impl GlintApp {
@@ -58,7 +66,7 @@ impl GlintApp {
         let store = IndexStore::new(&data_dir);
         // Start with empty index and load asynchronously so UI is instant
         let index = Arc::new(Index::new());
-        let (tx, rx) = crossbeam_channel::unbounded::<Arc<Index>>();
+        let (tx, rx) = unbounded::<Arc<Index>>();
         let data_dir_clone = data_dir.clone();
         std::thread::spawn(move || {
             let s = IndexStore::new(&data_dir_clone);
@@ -86,12 +94,17 @@ impl GlintApp {
             loading_index: true,
             load_started_at: Instant::now(),
             load_rx: Some(rx),
+            building_index: false,
+            build_started_at: Instant::now(),
+            build_rx: None,
+            saving_index: false,
+            save_rx: None,
         }
     }
 
     pub fn reload_index(&mut self) {
         self.index = Arc::new(self.store.load_or_new());
-        self.search.index = Arc::clone(&self.index);
+        self.search.set_index(Arc::clone(&self.index));
         let count = self.index.len();
         self.status_message = format!("Index reloaded: {} files", format_number(count));
         self.search.clear();
@@ -188,7 +201,7 @@ impl GlintApp {
             }
 
             self.index = Arc::new(new_index);
-            self.search.index = Arc::clone(&self.index);
+            self.search.set_index(Arc::clone(&self.index));
             if let Err(e) = self.store.save(&self.index) {
                 self.status_message = format!(
                     "Indexed {} files but failed to save: {}",
@@ -219,7 +232,11 @@ impl eframe::App for GlintApp {
                 match rx.try_recv() {
                     Ok(new_index) => {
                         self.index = new_index;
-                        self.search.index = Arc::clone(&self.index);
+                        self.search.set_index(Arc::clone(&self.index));
+                        // Try to open zero-copy archived view (if v3 exists)
+                        if let Ok(view) = ArchivedView::open(self.store.index_path()) {
+                            self.search.set_archived_view(Arc::new(view));
+                        }
                         let count = self.index.len();
                         self.status_message = if count > 0 {
                             format!("{} files indexed", format_number(count))
@@ -260,6 +277,142 @@ impl eframe::App for GlintApp {
         if self.show_index_builder {
             ui::index_builder_window(ctx, self);
         }
+
+        // Poll async index build
+        if self.building_index {
+            if let Some(rx) = &self.build_rx {
+                match rx.try_recv() {
+                    Ok(Ok(new_index)) => {
+                        self.index = new_index;
+                        self.search.set_index(Arc::clone(&self.index));
+                        let count = self.index.len();
+                        self.status_message = format!("Indexed {} files. Saving...", format_number(count));
+                        self.building_index = false;
+
+                        // Save asynchronously
+                        let index_for_save = Arc::clone(&self.index);
+                        let base_dir = self.store.index_path().parent().map(|p| p.to_path_buf());
+                        if let Some(dir) = base_dir {
+                            let (stx, srx) = unbounded::<Result<(), String>>();
+                            self.save_rx = Some(srx);
+                            self.saving_index = true;
+                            std::thread::spawn(move || {
+                                let store = IndexStore::new(&dir);
+                                let res = store.save(&index_for_save).map_err(|e| e.to_string());
+                                let _ = stx.send(res);
+                            });
+                        } else {
+                            self.status_message = "Indexed, but failed to resolve save path".to_string();
+                        }
+                    }
+                    Ok(Err(msg)) => {
+                        self.status_message = msg;
+                        self.building_index = false;
+                    }
+                    Err(_) => {
+                        let secs = self.build_started_at.elapsed().as_secs_f32();
+                        self.status_message = format!("Indexing... {:.1}s", secs);
+                        ctx.request_repaint_after(Duration::from_millis(150));
+                    }
+                }
+            }
+        }
+
+        // Poll async save
+        if self.saving_index {
+            if let Some(rx) = &self.save_rx {
+                match rx.try_recv() {
+                    Ok(Ok(())) => {
+                        self.status_message = "Index saved".to_string();
+                        self.saving_index = false;
+                        self.save_rx = None;
+                    }
+                    Ok(Err(msg)) => {
+                        self.status_message = format!("Save failed: {}", msg);
+                        self.saving_index = false;
+                        self.save_rx = None;
+                    }
+                    Err(_) => {
+                        // throttle repaint
+                        ctx.request_repaint_after(Duration::from_millis(150));
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl GlintApp {
+    /// Start building index asynchronously for selected volumes
+    pub fn start_index_build(&mut self) {
+        let volumes: Vec<char> = self
+            .available_volumes
+            .iter()
+            .filter(|v| v.selected)
+            .map(|v| v.letter)
+            .collect();
+        if volumes.is_empty() {
+            self.status_message = "Please select at least one volume".to_string();
+            return;
+        }
+
+        // Persist selected volumes
+        self.settings.indexed_volumes = volumes.clone();
+        if let Err(e) = self.settings.save() {
+            self.status_message = format!("Failed to save settings: {}", e);
+        }
+
+        let (tx, rx) = unbounded::<Result<Arc<Index>, String>>();
+        self.build_rx = Some(rx);
+        self.building_index = true;
+        self.build_started_at = Instant::now();
+        self.status_message = format!("Indexing volumes: {:?}...", volumes);
+
+        std::thread::spawn(move || {
+            #[cfg(windows)]
+            {
+                use glint_backend_ntfs::NtfsBackend;
+                use glint_core::{backend::FileSystemBackend, Index};
+
+                let backend = NtfsBackend::new();
+                let new_index = Index::new();
+                match backend.list_volumes() {
+                    Ok(all) => {
+                        for volume in all {
+                            let mount_letter = volume
+                                .mount_point
+                                .chars()
+                                .next()
+                                .map(|c| c.to_ascii_uppercase());
+                            if let Some(letter) = mount_letter {
+                                if volumes.contains(&letter) {
+                                    match backend.full_scan(&volume, None) {
+                                        Ok(records) => {
+                                            new_index.add_volume_records(&volume, records);
+                                        }
+                                        Err(e) => {
+                                            let _ = tx.send(Err(format!(
+                                                "Failed to scan {}: {}",
+                                                volume.mount_point, e
+                                            )));
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let _ = tx.send(Ok(Arc::new(new_index)));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(format!("Failed to enumerate volumes: {}", e)));
+                    }
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = tx.send(Err("NTFS indexing only available on Windows".to_string()));
+            }
+        });
     }
 }
 

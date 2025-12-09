@@ -35,6 +35,7 @@ pub mod index;
 pub mod persistence;
 pub mod search;
 pub mod types;
+pub mod archive_view;
 
 // Re-export commonly used types
 pub use backend::{ChangeEvent, ChangeHandler, ChangeKind, FileSystemBackend, VolumeInfo};
@@ -44,3 +45,7 @@ pub use index::Index;
 pub use persistence::IndexStore;
 pub use search::{SearchFilter, SearchQuery, SearchResult};
 pub use types::{FileId, FileRecord, VolumeId};
+
+// Expose archive module internally
+#[allow(dead_code)]
+mod archive;

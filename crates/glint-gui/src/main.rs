@@ -24,13 +24,16 @@ use eframe::egui;
 use std::env;
 
 fn main() -> eframe::Result<()> {
-    // Initialize logging
+    // Initialize logging to a file in the current directory
+    let file_appender = tracing_appender::rolling::never(".", "glint-debug.log");
+    let (nb_writer, _guard) = tracing_appender::non_blocking(file_appender);
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(tracing::Level::INFO.into()),
         )
         .with_ansi(false)
+        .with_writer(nb_writer)
         .init();
 
     // Handle command-line arguments
