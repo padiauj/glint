@@ -131,7 +131,7 @@ impl SearchQuery {
     pub fn matches(&self, record: &FileRecord) -> bool {
         // Get the text to search in
         let text = if self.search_path {
-            &record.path
+            &record.path_lower
         } else {
             &record.name_lower
         };
@@ -256,7 +256,8 @@ impl Matcher for SubstringMatcher {
         if self.pattern_lower.is_empty() {
             return true;
         }
-        text.to_lowercase().contains(&self.pattern_lower)
+        // `text` is already lowercase (name_lower or path_lower)
+        text.contains(&self.pattern_lower)
     }
 
     fn matches_all(&self) -> bool {
@@ -279,7 +280,8 @@ impl ExactMatcher {
 
 impl Matcher for ExactMatcher {
     fn matches(&self, text: &str, _record: &FileRecord) -> bool {
-        text.to_lowercase() == self.pattern_lower
+        // `text` is already lowercase (name_lower or path_lower)
+        text == self.pattern_lower
     }
 }
 

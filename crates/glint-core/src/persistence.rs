@@ -43,6 +43,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
+use rayon::prelude::*;
 
 /// Magic bytes at the start of index files
 const MAGIC_HEADER: &[u8; 4] = b"GLNT";
@@ -257,7 +258,7 @@ impl IndexStore {
         };
 
         // Calculate checksum
-        let checksum = crc32_fast(&final_data);
+        let checksum = crc32fast::hash(&final_data);
 
         // Write to temp file
         let temp_path = self.temp_path();
@@ -343,7 +344,7 @@ impl IndexStore {
         }
 
         // Verify checksum
-        let computed_checksum = crc32_fast(&data);
+        let computed_checksum = crc32fast::hash(&data);
         if stored_checksum != computed_checksum {
             return Err(GlintError::IndexCorrupted {
                 reason: format!(
@@ -367,16 +368,19 @@ impl IndexStore {
             bincode::deserialize(&decompressed).map_err(|e| GlintError::IndexCorrupted {
                 reason: format!("Deserialization failed: {}", e),
             })?;
+        
+        // Precompute caches in parallel to speed up loading
+        let mut records: Vec<FileRecord> = stored.records;
+        records.par_iter_mut().for_each(|r| r.init_cache());
 
         // Build the index
-        let index = Index::with_capacity(stored.records.len());
+        let index = Index::with_capacity(records.len());
 
         // Group records by volume and add them
         let mut records_by_volume: std::collections::HashMap<String, Vec<FileRecord>> =
             std::collections::HashMap::new();
 
-        for mut record in stored.records {
-            record.init_cache();
+        for record in records {
             let vid = record.volume_id.as_str().to_string();
             records_by_volume.entry(vid).or_default().push(record);
         }
@@ -452,26 +456,7 @@ impl IndexStore {
     }
 }
 
-/// Fast CRC32 checksum calculation.
-///
-/// Uses a simple implementation; could be optimized with SIMD or crc32fast crate.
-fn crc32_fast(data: &[u8]) -> u32 {
-    // CRC-32/ISO-HDLC polynomial
-    const POLY: u32 = 0xEDB88320;
-
-    let mut crc = !0u32;
-    for &byte in data {
-        crc ^= byte as u32;
-        for _ in 0..8 {
-            crc = if crc & 1 != 0 {
-                (crc >> 1) ^ POLY
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    !crc
-}
+// Checksum calculation now uses the optimized crc32fast crate.
 
 #[cfg(test)]
 mod tests {
@@ -564,13 +549,7 @@ mod tests {
         assert!(!store.exists());
     }
 
-    #[test]
-    fn test_crc32() {
-        let data = b"Hello, World!";
-        let crc = crc32_fast(data);
-        // This is the expected CRC-32/ISO-HDLC value
-        assert_eq!(crc, 0xEC4AC3D0);
-    }
+    // CRC is validated indirectly via save/load paths.
 
     #[test]
     fn test_corrupted_index() {

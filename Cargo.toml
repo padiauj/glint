@@ -17,7 +17,7 @@ authors = ["Glint Contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/glint-search/glint"
 description = "Extremely fast file name search across local volumes"
-rust-version = "1.77"
+rust-version = "1.75"
 
 [workspace.dependencies]
 # Core dependencies

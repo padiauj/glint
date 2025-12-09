@@ -118,7 +118,10 @@ mod windows_installer {
             return Ok(false);
         }
 
-        info!("Installing Glint v{} to {:?}", APP_VERSION, paths.install_dir);
+        info!(
+            "Installing Glint v{} to {:?}",
+            APP_VERSION, paths.install_dir
+        );
 
         // Create installation directory
         fs::create_dir_all(&paths.install_dir)?;
@@ -154,7 +157,7 @@ mod windows_installer {
     /// Create Start Menu shortcut using PowerShell (simpler and more reliable)
     fn create_shortcut(paths: &InstallPaths) -> io::Result<()> {
         use std::process::Command;
-        
+
         // Ensure Start Menu directory exists
         fs::create_dir_all(&paths.start_menu_dir)?;
 
@@ -172,11 +175,17 @@ mod windows_installer {
             paths.exe_path.to_string_lossy().replace("\\", "\\\\"),
             paths.install_dir.to_string_lossy().replace("\\", "\\\\"),
         );
-        
+
         let output = Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_script])
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &ps_script,
+            ])
             .output()?;
-        
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             warn!("PowerShell shortcut creation warning: {}", stderr);
@@ -195,14 +204,25 @@ mod windows_installer {
         key.set_value("DisplayName", &APP_NAME)?;
         key.set_value("DisplayVersion", &APP_VERSION)?;
         key.set_value("Publisher", &APP_PUBLISHER)?;
-        key.set_value("InstallLocation", &paths.install_dir.to_string_lossy().to_string())?;
-        key.set_value("DisplayIcon", &format!("{},0", paths.exe_path.to_string_lossy()))?;
-        key.set_value("UninstallString", &format!("\"{}\" --uninstall", paths.exe_path.to_string_lossy()))?;
+        key.set_value(
+            "InstallLocation",
+            &paths.install_dir.to_string_lossy().to_string(),
+        )?;
+        key.set_value(
+            "DisplayIcon",
+            &format!("{},0", paths.exe_path.to_string_lossy()),
+        )?;
+        key.set_value(
+            "UninstallString",
+            &format!("\"{}\" --uninstall", paths.exe_path.to_string_lossy()),
+        )?;
         key.set_value("NoModify", &1u32)?;
         key.set_value("NoRepair", &1u32)?;
 
         // Estimate size (in KB)
-        let size_kb = paths.exe_path.metadata()
+        let size_kb = paths
+            .exe_path
+            .metadata()
             .map(|m| m.len() / 1024)
             .unwrap_or(0) as u32;
         key.set_value("EstimatedSize", &size_kb)?;

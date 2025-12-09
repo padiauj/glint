@@ -24,6 +24,7 @@ tracing.workspace = true
 chrono.workspace = true
 toml.workspace = true
 directories.workspace = true
+crc32fast = "1"
 
 [dev-dependencies]
 tempfile.workspace = true

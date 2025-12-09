@@ -29,10 +29,8 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+use windows::Win32::System::Ioctl::{FSCTL_ENUM_USN_DATA, FSCTL_GET_NTFS_VOLUME_DATA};
 use windows::Win32::System::IO::DeviceIoControl;
-use windows::Win32::System::Ioctl::{
-    FSCTL_ENUM_USN_DATA, FSCTL_GET_NTFS_VOLUME_DATA,
-};
 
 /// USN record header for reading MFT data
 #[repr(C)]
@@ -92,8 +90,8 @@ struct UsnRecordV3 {
     record_length: u32,
     major_version: u16,
     minor_version: u16,
-    file_reference_number: [u8; 16],  // FILE_ID_128
-    parent_file_reference_number: [u8; 16],  // FILE_ID_128
+    file_reference_number: [u8; 16],        // FILE_ID_128
+    parent_file_reference_number: [u8; 16], // FILE_ID_128
     usn: i64,
     timestamp: i64,
     reason: u32,
@@ -233,22 +231,25 @@ fn enumerate_usn_records(
 
         // Parse USN records from the buffer
         let mut offset = 8usize;
-        while offset + 8 <= bytes_returned as usize {  // At least need record_length + major_version
+        while offset + 8 <= bytes_returned as usize {
+            // At least need record_length + major_version
             // Peek at the record length and version
-            let record_length = u32::from_ne_bytes(buffer[offset..offset+4].try_into().unwrap());
-            let major_version = u16::from_ne_bytes(buffer[offset+4..offset+6].try_into().unwrap());
+            let record_length = u32::from_ne_bytes(buffer[offset..offset + 4].try_into().unwrap());
+            let major_version =
+                u16::from_ne_bytes(buffer[offset + 4..offset + 6].try_into().unwrap());
 
             if record_length == 0 || offset + record_length as usize > bytes_returned as usize {
                 break;
             }
-            
+
             // Parse based on version
-            let (file_ref, parent_ref, timestamp, file_attrs, name_offset, name_len) = 
+            let (file_ref, parent_ref, timestamp, file_attrs, name_offset, name_len) =
                 if major_version == 2 {
                     if offset + mem::size_of::<UsnRecordV2>() > bytes_returned as usize {
                         break;
                     }
-                    let record = unsafe { &*(buffer.as_ptr().wrapping_add(offset) as *const UsnRecordV2) };
+                    let record =
+                        unsafe { &*(buffer.as_ptr().wrapping_add(offset) as *const UsnRecordV2) };
                     (
                         record.file_reference_number,
                         record.parent_file_reference_number,
@@ -261,10 +262,16 @@ fn enumerate_usn_records(
                     if offset + mem::size_of::<UsnRecordV3>() > bytes_returned as usize {
                         break;
                     }
-                    let record = unsafe { &*(buffer.as_ptr().wrapping_add(offset) as *const UsnRecordV3) };
+                    let record =
+                        unsafe { &*(buffer.as_ptr().wrapping_add(offset) as *const UsnRecordV3) };
                     // FILE_ID_128: use lower 64 bits for compatibility
-                    let file_ref = u64::from_ne_bytes(record.file_reference_number[0..8].try_into().unwrap());
-                    let parent_ref = u64::from_ne_bytes(record.parent_file_reference_number[0..8].try_into().unwrap());
+                    let file_ref =
+                        u64::from_ne_bytes(record.file_reference_number[0..8].try_into().unwrap());
+                    let parent_ref = u64::from_ne_bytes(
+                        record.parent_file_reference_number[0..8]
+                            .try_into()
+                            .unwrap(),
+                    );
                     (
                         file_ref,
                         parent_ref,
@@ -278,7 +285,7 @@ fn enumerate_usn_records(
                     offset += record_length as usize;
                     continue;
                 };
-            
+
             // Debug: dump raw record info for first few
             if raw_records.len() < 5 {
                 debug!(
@@ -295,9 +302,7 @@ fn enumerate_usn_records(
 
             if name_len > 0 && offset + name_offset + name_len <= bytes_returned as usize {
                 let name_ptr = buffer.as_ptr().wrapping_add(offset + name_offset) as *const u16;
-                let name_slice = unsafe {
-                    std::slice::from_raw_parts(name_ptr, name_len / 2)
-                };
+                let name_slice = unsafe { std::slice::from_raw_parts(name_ptr, name_len / 2) };
                 let name = String::from_utf16_lossy(name_slice);
 
                 // Extract file ID (lower 48 bits of reference number)
@@ -320,7 +325,11 @@ fn enumerate_usn_records(
 
                 raw_records.push(RawFileRecord {
                     file_id,
-                    parent_id: if parent_id == 0 { None } else { Some(FileId::new(parent_id)) },
+                    parent_id: if parent_id == 0 {
+                        None
+                    } else {
+                        Some(FileId::new(parent_id))
+                    },
                     name,
                     is_dir,
                     timestamp,
@@ -384,7 +393,7 @@ fn build_paths(
     mount_point: &str,
 ) -> Vec<FileRecord> {
     let total_raw = raw_records.len();
-    
+
     // Build a map from file ID to record index
     let mut id_to_index: HashMap<u64, usize> = HashMap::with_capacity(raw_records.len());
     for (i, record) in raw_records.iter().enumerate() {
@@ -413,11 +422,7 @@ fn build_paths(
 
     for raw in &raw_records {
         // Skip system files with empty names or special names
-        if raw.name.is_empty()
-            || raw.name.starts_with('$')
-            || raw.name == "."
-            || raw.name == ".."
-        {
+        if raw.name.is_empty() || raw.name.starts_with('$') || raw.name == "." || raw.name == ".." {
             continue;
         }
 
@@ -436,7 +441,7 @@ fn build_paths(
 
         result.push(record);
     }
-    
+
     info!(
         raw_count = total_raw,
         filtered_count = result.len(),
@@ -468,10 +473,7 @@ fn build_single_path(
 
         if let Some(&idx) = id_to_index.get(&parent_id.as_u64()) {
             let parent = &records[idx];
-            if !parent.name.is_empty()
-                && !parent.name.starts_with('$')
-                && parent.name != "."
-            {
+            if !parent.name.is_empty() && !parent.name.starts_with('$') && parent.name != "." {
                 path_parts.push(parent.name.clone());
             }
             current_parent = parent.parent_id;
@@ -613,7 +615,11 @@ mod tests {
 
                 // Print some sample records
                 for record in records.iter().take(10) {
-                    println!("  {} ({})", record.path, if record.is_dir { "dir" } else { "file" });
+                    println!(
+                        "  {} ({})",
+                        record.path,
+                        if record.is_dir { "dir" } else { "file" }
+                    );
                 }
             }
             Err(NtfsError::AccessDenied { .. }) => {

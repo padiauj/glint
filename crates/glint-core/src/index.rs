@@ -147,10 +147,10 @@ impl Index {
         let volume_id = volume.id.as_str().to_string();
         let record_count = records.len();
 
-        debug!(
+        info!(
             volume = %volume_id,
             records = record_count,
-            "Adding records to index"
+            "Adding records from volume scan"
         );
 
         // Remove existing records for this volume
@@ -701,10 +701,8 @@ mod tests {
         let index = Index::new();
         index.add_volume_records(&make_volume_info(), make_test_records());
 
-        let query =
-            SearchQuery::substring("").with_filter(crate::search::SearchFilter::Extensions(vec![
-                "rs".to_string(),
-            ]));
+        let query = SearchQuery::substring("")
+            .with_filter(crate::search::SearchFilter::Extensions(vec!["rs".to_string()]));
         let results = index.search(&query);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].record.name, "main.rs");

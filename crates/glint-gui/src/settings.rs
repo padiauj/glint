@@ -36,7 +36,7 @@ impl Settings {
             Ok(Self::default())
         }
     }
-    
+
     /// Save settings to disk.
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
         let path = Self::settings_path()?;
@@ -47,7 +47,7 @@ impl Settings {
         std::fs::write(&path, content)?;
         Ok(())
     }
-    
+
     /// Get the settings file path.
     fn settings_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
         let dirs = directories::ProjectDirs::from("org", "glint", "glint")

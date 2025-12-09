@@ -17,23 +17,23 @@ mod windows_service {
     use std::time::Duration;
     use tracing::{debug, error, info, warn};
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{CloseHandle, HANDLE, ERROR_SERVICE_DOES_NOT_EXIST};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_SERVICE_DOES_NOT_EXIST, HANDLE};
     use windows::Win32::Security::{
         GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
     };
     use windows::Win32::System::Services::{
-        CloseServiceHandle, ControlService, CreateServiceW, DeleteService,
-        OpenSCManagerW, OpenServiceW, QueryServiceStatus, StartServiceW,
-        SC_HANDLE, SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS, SERVICE_AUTO_START,
-        SERVICE_CONTROL_STOP, SERVICE_ERROR_NORMAL, SERVICE_QUERY_STATUS,
-        SERVICE_RUNNING, SERVICE_START, SERVICE_STATUS, SERVICE_STOP,
+        CloseServiceHandle, ControlService, CreateServiceW, DeleteService, OpenSCManagerW,
+        OpenServiceW, QueryServiceStatus, StartServiceW, SC_HANDLE, SC_MANAGER_ALL_ACCESS,
+        SERVICE_ALL_ACCESS, SERVICE_AUTO_START, SERVICE_CONTROL_STOP, SERVICE_ERROR_NORMAL,
+        SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_START, SERVICE_STATUS, SERVICE_STOP,
         SERVICE_STOPPED, SERVICE_WIN32_OWN_PROCESS,
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     const SERVICE_NAME: &str = "GlintIndexService";
     const SERVICE_DISPLAY_NAME: &str = "Glint Index Service";
-    const SERVICE_DESCRIPTION: &str = "Monitors file system changes to keep Glint search index up to date";
+    const SERVICE_DESCRIPTION: &str =
+        "Monitors file system changes to keep Glint search index up to date";
 
     /// Service status
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +97,7 @@ mod windows_service {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("Programs")
             .join("Glint");
-        
+
         // For now, use the CLI exe for the service
         // In the future, we might have a dedicated service exe
         Ok(install_dir.join("glint.exe"))
@@ -106,15 +106,23 @@ mod windows_service {
     /// Get current service status
     pub fn get_service_status() -> ServiceStatus {
         unsafe {
-            let sc_manager = OpenSCManagerW(PCWSTR(ptr::null()), PCWSTR(ptr::null()), SC_MANAGER_ALL_ACCESS);
+            let sc_manager = OpenSCManagerW(
+                PCWSTR(ptr::null()),
+                PCWSTR(ptr::null()),
+                SC_MANAGER_ALL_ACCESS,
+            );
             if sc_manager.is_err() {
                 return ServiceStatus::Unknown;
             }
             let sc_manager = sc_manager.unwrap();
 
             let service_name = to_wide(SERVICE_NAME);
-            let service = OpenServiceW(sc_manager, PCWSTR(service_name.as_ptr()), SERVICE_QUERY_STATUS);
-            
+            let service = OpenServiceW(
+                sc_manager,
+                PCWSTR(service_name.as_ptr()),
+                SERVICE_QUERY_STATUS,
+            );
+
             if service.is_err() {
                 let _ = CloseServiceHandle(sc_manager);
                 return ServiceStatus::NotInstalled;
@@ -160,8 +168,12 @@ mod windows_service {
         let service_command = format!("\"{}\" watch --service", exe_path.to_string_lossy());
 
         unsafe {
-            let sc_manager = OpenSCManagerW(PCWSTR(ptr::null()), PCWSTR(ptr::null()), SC_MANAGER_ALL_ACCESS)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            let sc_manager = OpenSCManagerW(
+                PCWSTR(ptr::null()),
+                PCWSTR(ptr::null()),
+                SC_MANAGER_ALL_ACCESS,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
             let service_name = to_wide(SERVICE_NAME);
             let display_name = to_wide(SERVICE_DISPLAY_NAME);
@@ -227,12 +239,20 @@ mod windows_service {
         let _ = stop_service();
 
         unsafe {
-            let sc_manager = OpenSCManagerW(PCWSTR(ptr::null()), PCWSTR(ptr::null()), SC_MANAGER_ALL_ACCESS)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            let sc_manager = OpenSCManagerW(
+                PCWSTR(ptr::null()),
+                PCWSTR(ptr::null()),
+                SC_MANAGER_ALL_ACCESS,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
             let service_name = to_wide(SERVICE_NAME);
-            let service = OpenServiceW(sc_manager, PCWSTR(service_name.as_ptr()), SERVICE_ALL_ACCESS);
-            
+            let service = OpenServiceW(
+                sc_manager,
+                PCWSTR(service_name.as_ptr()),
+                SERVICE_ALL_ACCESS,
+            );
+
             if let Err(e) = service {
                 let _ = CloseServiceHandle(sc_manager);
                 // If service doesn't exist, that's fine
@@ -241,7 +261,7 @@ mod windows_service {
             let service = service.unwrap();
 
             let result = DeleteService(service);
-            
+
             let _ = CloseServiceHandle(service);
             let _ = CloseServiceHandle(sc_manager);
 
@@ -257,8 +277,12 @@ mod windows_service {
     /// Start the background service
     pub fn start_service() -> io::Result<()> {
         unsafe {
-            let sc_manager = OpenSCManagerW(PCWSTR(ptr::null()), PCWSTR(ptr::null()), SC_MANAGER_ALL_ACCESS)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            let sc_manager = OpenSCManagerW(
+                PCWSTR(ptr::null()),
+                PCWSTR(ptr::null()),
+                SC_MANAGER_ALL_ACCESS,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
             let service_name = to_wide(SERVICE_NAME);
             let service = OpenServiceW(sc_manager, PCWSTR(service_name.as_ptr()), SERVICE_START)
@@ -268,7 +292,7 @@ mod windows_service {
                 })?;
 
             let result = StartServiceW(service, None);
-            
+
             let _ = CloseServiceHandle(service);
             let _ = CloseServiceHandle(sc_manager);
 
@@ -284,8 +308,12 @@ mod windows_service {
     /// Stop the background service
     pub fn stop_service() -> io::Result<()> {
         unsafe {
-            let sc_manager = OpenSCManagerW(PCWSTR(ptr::null()), PCWSTR(ptr::null()), SC_MANAGER_ALL_ACCESS)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            let sc_manager = OpenSCManagerW(
+                PCWSTR(ptr::null()),
+                PCWSTR(ptr::null()),
+                SC_MANAGER_ALL_ACCESS,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
             let service_name = to_wide(SERVICE_NAME);
             let service = OpenServiceW(sc_manager, PCWSTR(service_name.as_ptr()), SERVICE_STOP)
@@ -296,7 +324,7 @@ mod windows_service {
 
             let mut status = SERVICE_STATUS::default();
             let result = ControlService(service, SERVICE_CONTROL_STOP, &mut status);
-            
+
             let _ = CloseServiceHandle(service);
             let _ = CloseServiceHandle(sc_manager);
 
@@ -326,9 +354,10 @@ mod windows_service {
                 stop_service()?;
                 Ok(ServiceStatus::Stopped)
             }
-            ServiceStatus::Unknown => {
-                Err(io::Error::new(io::ErrorKind::Other, "Unknown service state"))
-            }
+            ServiceStatus::Unknown => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Unknown service state",
+            )),
         }
     }
 

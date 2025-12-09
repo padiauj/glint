@@ -1,7 +1,8 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
 //! Glint GUI - Cross-platform graphical interface for Glint.
 //!
-//! This application provides a fast, responsive search interface using Qt/QML.
-//! Qt is used under the LGPL license via dynamic linking.
+//! This application provides a fast, responsive search interface using egui.
+//! It's designed to work on Windows, macOS, and Linux without external dependencies.
 //!
 //! ## Self-Installation
 //!
@@ -11,20 +12,25 @@
 //! - Registers in Add/Remove Programs
 //! - Running a newer version automatically updates
 
-mod bridge;
+mod app;
 mod installer;
+mod search;
 mod service;
 mod settings;
+mod ui;
 
+use app::GlintApp;
+use eframe::egui;
 use std::env;
 
-fn main() {
+fn main() -> eframe::Result<()> {
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(tracing::Level::INFO.into()),
         )
+        .with_ansi(false)
         .init();
 
     // Handle command-line arguments
@@ -110,20 +116,29 @@ fn main() {
         }
     }
 
-    tracing::info!("Starting Glint GUI (Qt)");
+    tracing::info!("Starting Glint GUI");
 
-    // Initialize Qt application
-    let mut app = cxx_qt_lib::QGuiApplication::new();
-    let mut engine = cxx_qt_lib::QQmlApplicationEngine::new();
-    
-    // Load the main QML file
-    if let Some(engine) = engine.as_mut() {
-        engine.load(&cxx_qt_lib::QUrl::from("qrc:/qt/qml/org/glint/app/qml/Main.qml"));
-    }
-    
-    // Run the Qt event loop
-    if let Some(app) = app.as_mut() {
-        let exit_code = app.exec();
-        std::process::exit(exit_code);
-    }
+    // Configure native options
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1000.0, 700.0])
+            .with_min_inner_size([600.0, 400.0])
+            .with_title("Glint - Fast File Search")
+            .with_icon(load_icon()),
+        ..Default::default()
+    };
+
+    // Run the application
+    eframe::run_native(
+        "Glint",
+        options,
+        Box::new(|cc| Ok(Box::new(GlintApp::new(cc)))),
+    )
+}
+
+/// Load application icon (returns default if not found)
+fn load_icon() -> egui::IconData {
+    // Default icon data (a simple magnifying glass shape encoded as RGBA)
+    // In production, you'd load from an actual icon file
+    egui::IconData::default()
 }

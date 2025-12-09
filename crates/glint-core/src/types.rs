@@ -109,6 +109,9 @@ pub struct FileRecord {
     #[serde(skip)]
     pub name_lower: String,
 
+    /// Pre-computed lowercase full path for fast case-insensitive path search
+    #[serde(skip)]
+    pub path_lower: String,
     /// Full path including filename (e.g., "C:\Users\doc\document.txt")
     pub path: String,
 
@@ -138,6 +141,7 @@ impl FileRecord {
         is_dir: bool,
     ) -> Self {
         let name_lower = name.to_lowercase();
+        let path_lower = path.to_lowercase();
         FileRecord {
             id,
             parent_id,
@@ -145,6 +149,7 @@ impl FileRecord {
             name,
             name_lower,
             path,
+            path_lower,
             is_dir,
             size: None,
             modified: None,
@@ -182,6 +187,9 @@ impl FileRecord {
     pub fn init_cache(&mut self) {
         if self.name_lower.is_empty() {
             self.name_lower = self.name.to_lowercase();
+        }
+        if self.path_lower.is_empty() {
+            self.path_lower = self.path.to_lowercase();
         }
     }
 
